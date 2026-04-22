@@ -1,0 +1,5 @@
+{"ts_ms": 1776866149181, "status": "ok", "source": "vision_pipeline", "event_id": 1, "label": "person", "confidence": 0.7305}
+{"ts_ms": 1776866149257, "status": "no_detection", "source": "vision_pipeline", "event_id": 2, "label": "person", "confidence": 0.6797}
+{"ts_ms": 1776866149295, "status": "no_detection", "source": "vision_pipeline", "event_id": 3, "label": "person", "confidence": 0.6211}
+{"ts_ms": 1776866149342, "status": "no_detection", "source": "vision_pipeline", "event_id": 4, "label": "person", "confidence": 0.6211}
+{"ts_ms": 1776866149376, "status": "no_detection", "source": "vision_pipeline", "event_id": 5, "label": "person", "confidence": 0.6797}
