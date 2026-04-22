@@ -6,16 +6,16 @@ from pathlib import Path
 from picamera2 import Picamera2
 from picamera2.devices import IMX500
 from picamera2.devices.imx500 import NetworkIntrinsics
+import subprocess
 
 MODEL = "/usr/share/imx500-models/imx500_network_ssd_mobilenetv2_fpnlite_320x320_pp.rpk"
-OUT = Path("trackB/vision_events.jsonl")
-PIPELINE_LOG = Path("trackB/pipeline_log.jsonl")
-LATEST_DETECTIONS = Path("trackB/latest_detections.txt")
+OUT = Path("artifacts/vision_events.jsonl")
+PIPELINE_LOG = Path("artifacts/pipeline_log.jsonl")
+LATEST_DETECTIONS = Path("artifacts/latest_detections.txt")
 
 THRESHOLD = 0.55
 PIPELINE_OK_THRESHOLD = 0.70
-MAX_RECORDS = 5
-MAX_FRAMES_WITHOUT_DETECTION = 100
+RECORDING_SECONDS = 20
 
 
 def append_pipeline_log(status, event_id, label, confidence, ts_ms):
@@ -42,7 +42,7 @@ def append_latest_detection(label, confidence, ts_ms):
 def main():
     OUT.parent.mkdir(parents=True, exist_ok=True)
 
-    # Reset only these files each run
+    # Reset these files each run
     OUT.write_text("", encoding="utf-8")
     LATEST_DETECTIONS.write_text("", encoding="utf-8")
 
@@ -68,19 +68,26 @@ def main():
     picam2.start(config, show_preview=False)
     time.sleep(2)
 
-    written = 0
     event_id = 1
-    frames_checked = 0
+
+    # Track image capture so we save at most 1 picture per second
+    last_capture_second = -1
+    current_second_image_path = None
+
+    # Fixed 20-second monitoring window
+    start_monotonic = time.monotonic()
 
     try:
-        while written < MAX_RECORDS and frames_checked < MAX_FRAMES_WITHOUT_DETECTION:
+        while True:
+            elapsed = time.monotonic() - start_monotonic
+            if elapsed >= RECORDING_SECONDS:
+                break
+
             metadata = picam2.capture_metadata()
             outputs = imx500.get_outputs(metadata, add_batch=True)
 
             if outputs is None:
                 continue
-
-            frames_checked += 1
 
             boxes, scores, classes = outputs[0][0], outputs[1][0], outputs[2][0]
 
@@ -90,6 +97,17 @@ def main():
 
             if intrinsics.bbox_order == "xy":
                 boxes = boxes[:, [1, 0, 3, 2]]
+                
+            # Integer second within the 20-second run: 0..19
+            elapsed = time.monotonic() - start_monotonic
+            if elapsed >= RECORDING_SECONDS:
+                break
+
+            current_second = int(elapsed)
+
+            # Reset per-second shared image path when second changes
+            if current_second != last_capture_second:
+                current_second_image_path = None
 
             for box, score, category in zip(boxes, scores, classes):
                 score = float(score)
@@ -97,19 +115,27 @@ def main():
                 # Ignore extremely weak detections entirely
                 if score < THRESHOLD:
                     continue
-                    
+
                 label = str(category)
                 if labels and int(category) < len(labels):
                     label = labels[int(category)]
 
                 ts_ms = int(time.time() * 1000)
-
                 pipeline_status = "ok" if score >= PIPELINE_OK_THRESHOLD else "no_detection"
 
                 image_path = None
+                
+                # Only high-confidence detections can cause/use an image
                 if score >= PIPELINE_OK_THRESHOLD:
-                    image_path = f"trackB/capture_{event_id}.jpg"
-                    picam2.capture_file(image_path)
+                    # If we have not yet captured an image for this second, do it now
+                    if current_second_image_path is None:
+                        image_path = f"artifacts/capture_sec_{current_second:02d}.jpg"
+                        picam2.capture_file(image_path)
+                        current_second_image_path = image_path
+                        last_capture_second = current_second
+                    else:
+                        # Reuse the same image for all detections in this second
+                        image_path = current_second_image_path
 
                 scaled = imx500.convert_inference_coords(box, metadata, picam2)
 
@@ -130,15 +156,15 @@ def main():
                     "image_file": image_path,
                     "rule": "imx500_mobilenet_ssd_v1"
                 }
-                
+
                 with OUT.open("a", encoding="utf-8") as f:
                     f.write(json.dumps(record) + "\n")
 
-                # Only add to latest_detections if it passed pipeline threshold
+                # Only high-confidence detections go to latest detections
                 if score >= PIPELINE_OK_THRESHOLD:
                     append_latest_detection(label, score, ts_ms)
 
-                # Always add to pipeline log for every detection above THRESHOLD
+                # Every detection above THRESHOLD still goes to pipeline
                 append_pipeline_log(
                     status=pipeline_status,
                     event_id=event_id,
@@ -147,16 +173,16 @@ def main():
                     ts_ms=ts_ms
                 )
 
-                written += 1
                 event_id += 1
 
-                if written >= MAX_RECORDS:
-                    break
-
-        print("Wrote", written, "records to", OUT)
+        print(f"Monitoring session complete: ran for {RECORDING_SECONDS} seconds")
+        print("Detection records written to", OUT)
 
     finally:
         picam2.stop()
+        
+        # Trigger the next stage of the pipeline
+        subprocess.run(["python3", "src/person_candidate_extractor.py"], check=False)
 
 
 if __name__ == "__main__":

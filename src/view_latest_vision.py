@@ -3,7 +3,7 @@ from collections import Counter
 from pathlib import Path
 from datetime import datetime
 
-VISION_EVENTS = Path("trackB/vision_events.jsonl")
+VISION_EVENTS = Path("artifacts/vision_events.jsonl")
 RECENT_COUNT = 5
 
 
