@@ -66,6 +66,20 @@ def main():
         json.dump(output, f, indent=2)
 
     print(f"Wrote {len(candidate_images)} candidate image(s) to {OUT_JSON}")
+    
+    result = subprocess.run(
+    ["python3", "src/face_candidate_extractor.py"],
+    capture_output=True,
+    text=True
+)
+
+    print("Face candidate extractor output:")
+    print(result.stdout)
+
+    if result.stderr:
+        print("Errors from face extractor:")
+        print(result.stderr)
+
 
 
 if __name__ == "__main__":

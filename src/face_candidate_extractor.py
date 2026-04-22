@@ -2,6 +2,8 @@ import json
 import time
 from pathlib import Path
 
+import subprocess
+
 import cv2
 
 INPUT_JSON = Path("artifacts/person_candidates.json")
@@ -94,6 +96,19 @@ def main():
 
     print(f"Wrote {len(results)} image result(s) to {OUTPUT_JSON}")
     print(f"Images with at least one face: {output['face_candidate_count']}")
+    
+    result = subprocess.run(
+        ["python3", "src/face_cropper.py"],
+        capture_output=True,
+        text=True
+    )
+
+    print("Face cropper output:")
+    print(result.stdout)
+
+    if result.stderr:
+        print("Errors from face cropper:")
+        print(result.stderr)
 
 
 if __name__ == "__main__":
