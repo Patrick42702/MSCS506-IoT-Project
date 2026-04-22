@@ -211,5 +211,6 @@ __marimo__/
 # ignore project output files
 
 latest_detections.txt
+*.json
 *.jsonl
 *.jpg
