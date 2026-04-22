@@ -1,6 +1,7 @@
 import json
 import time
 from pathlib import Path
+import subprocess
 
 VISION_EVENTS = Path("artifacts/vision_events.jsonl")
 OUT_JSON = Path("artifacts/person_candidates.json")
