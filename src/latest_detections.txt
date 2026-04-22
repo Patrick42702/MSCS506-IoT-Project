@@ -1,1 +1,0 @@
-2026-04-22 09:55:49 - Detected person with confidence 0.7305
