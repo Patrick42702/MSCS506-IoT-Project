@@ -2,6 +2,8 @@ import json
 import time
 from datetime import datetime
 from pathlib import Path
+import threading
+import paho.mqtt.client as mqtt
 
 from picamera2 import Picamera2
 from picamera2.devices import IMX500
@@ -13,10 +15,15 @@ OUT = Path("artifacts/vision_events.jsonl")
 PIPELINE_LOG = Path("artifacts/pipeline_log.jsonl")
 LATEST_DETECTIONS = Path("artifacts/latest_detections.txt")
 
+BROKER_HOST = "localhost"
+BROKER_PORT = 1883
+TOPIC = "mscs506n/s26/dev-arduino/events"
+
 THRESHOLD = 0.55
 PIPELINE_OK_THRESHOLD = 0.70
 RECORDING_SECONDS = 20
 
+processing_lock = threading.Lock()
 
 def append_pipeline_log(status, event_id, label, confidence, ts_ms):
     log_record = {
@@ -38,6 +45,41 @@ def append_latest_detection(label, confidence, ts_ms):
     with LATEST_DETECTIONS.open("a", encoding="utf-8") as f:
         f.write(line)
 
+def on_message(client, userdata, msg):
+    locked = processing_lock.acquire(blocking=False)
+
+    if locked:
+        print(f"Trigger received: {msg.payload.decode()}. Starting background thread.")
+
+        # start main on its own thread so we can keep
+        t = threading.Thread(target=run_camera_with_lock)
+        t.start()
+    else:
+        print("Camera busy. Message ignored.")
+
+def run_camera_with_lock():
+    try:
+        main()
+    finally:
+        processing_lock.release()
+        print("Camera task complete. Lock released.")
+
+def arduino_trigger():
+    client = mqtt.Client()
+
+    client.on_message = on_message
+
+    client.connect(BROKER_HOST, BROKER_PORT, keepalive=60)
+    client.subscribe(TOPIC)
+    client.loop_start()
+
+    # Keep the main script alive
+    try:
+        while True:
+            pass
+    except KeyboardInterrupt:
+        client.loop_stop()
+
 
 def main():
     OUT.parent.mkdir(parents=True, exist_ok=True)
@@ -58,132 +100,133 @@ def main():
     intrinsics.update_with_defaults()
     labels = intrinsics.labels or []
 
-    picam2 = Picamera2(imx500.camera_num)
-    config = picam2.create_preview_configuration(
-        controls={"FrameRate": intrinsics.inference_rate},
-        buffer_count=12
-    )
-    
-    imx500.show_network_fw_progress_bar()
-    picam2.start(config, show_preview=False)
-    time.sleep(2)
+    with Picamera2(imx500.camera_num) as picam2:
+        config = picam2.create_preview_configuration(
+            controls={"FrameRate": intrinsics.inference_rate},
+            buffer_count=12
+        )
+        
+        imx500.show_network_fw_progress_bar()
+        picam2.start(config, show_preview=False)
+        time.sleep(2)
 
-    event_id = 1
+        event_id = 1
 
-    # Track image capture so we save at most 1 picture per second
-    last_capture_second = -1
-    current_second_image_path = None
+        # Track image capture so we save at most 1 picture per second
+        last_capture_second = -1
+        current_second_image_path = None
 
-    # Fixed 20-second monitoring window
-    start_monotonic = time.monotonic()
+        # Fixed 20-second monitoring window
+        start_monotonic = time.monotonic()
 
-    try:
-        while True:
-            elapsed = time.monotonic() - start_monotonic
-            if elapsed >= RECORDING_SECONDS:
-                break
+        try:
+            while True:
+                elapsed = time.monotonic() - start_monotonic
+                if elapsed >= RECORDING_SECONDS:
+                    break
 
-            metadata = picam2.capture_metadata()
-            outputs = imx500.get_outputs(metadata, add_batch=True)
+                metadata = picam2.capture_metadata()
+                outputs = imx500.get_outputs(metadata, add_batch=True)
 
-            if outputs is None:
-                continue
-
-            boxes, scores, classes = outputs[0][0], outputs[1][0], outputs[2][0]
-
-            if intrinsics.bbox_normalization:
-                input_w, input_h = imx500.get_input_size()
-                boxes = boxes / input_h
-
-            if intrinsics.bbox_order == "xy":
-                boxes = boxes[:, [1, 0, 3, 2]]
-                
-            # Integer second within the 20-second run: 0..19
-            elapsed = time.monotonic() - start_monotonic
-            if elapsed >= RECORDING_SECONDS:
-                break
-
-            current_second = int(elapsed)
-
-            # Reset per-second shared image path when second changes
-            if current_second != last_capture_second:
-                current_second_image_path = None
-
-            for box, score, category in zip(boxes, scores, classes):
-                score = float(score)
-
-                # Ignore extremely weak detections entirely
-                if score < THRESHOLD:
+                if outputs is None:
                     continue
 
-                label = str(category)
-                if labels and int(category) < len(labels):
-                    label = labels[int(category)]
+                boxes, scores, classes = outputs[0][0], outputs[1][0], outputs[2][0]
 
-                ts_ms = int(time.time() * 1000)
-                pipeline_status = "ok" if score >= PIPELINE_OK_THRESHOLD else "no_detection"
+                if intrinsics.bbox_normalization:
+                    input_w, input_h = imx500.get_input_size()
+                    boxes = boxes / input_h
 
-                image_path = None
-                
-                # Only high-confidence detections can cause/use an image
-                if score >= PIPELINE_OK_THRESHOLD:
-                    # If we have not yet captured an image for this second, do it now
-                    if current_second_image_path is None:
-                        image_path = f"artifacts/capture_sec_{current_second:02d}.jpg"
-                        picam2.capture_file(image_path)
-                        current_second_image_path = image_path
-                        last_capture_second = current_second
-                    else:
-                        # Reuse the same image for all detections in this second
-                        image_path = current_second_image_path
+                if intrinsics.bbox_order == "xy":
+                    boxes = boxes[:, [1, 0, 3, 2]]
+                    
+                # Integer second within the 20-second run: 0..19
+                elapsed = time.monotonic() - start_monotonic
+                if elapsed >= RECORDING_SECONDS:
+                    break
 
-                scaled = imx500.convert_inference_coords(box, metadata, picam2)
+                current_second = int(elapsed)
 
-                record = {
-                    "device_id": "pi-camera",
-                    "ts_ms": ts_ms,
-                    "event_id": event_id,
-                    "event_type": "object_detected",
-                    "label": label,
-                    "class_id": int(category),
-                    "confidence": round(score, 4),
-                    "bbox": [
-                        int(scaled[0]),
-                        int(scaled[1]),
-                        int(scaled[2]),
-                        int(scaled[3])
-                    ],
-                    "image_file": image_path,
-                    "rule": "imx500_mobilenet_ssd_v1"
-                }
+                # Reset per-second shared image path when second changes
+                if current_second != last_capture_second:
+                    current_second_image_path = None
 
-                with OUT.open("a", encoding="utf-8") as f:
-                    f.write(json.dumps(record) + "\n")
+                for box, score, category in zip(boxes, scores, classes):
+                    score = float(score)
 
-                # Only high-confidence detections go to latest detections
-                if score >= PIPELINE_OK_THRESHOLD:
-                    append_latest_detection(label, score, ts_ms)
+                    # Ignore extremely weak detections entirely
+                    if score < THRESHOLD:
+                        continue
 
-                # Every detection above THRESHOLD still goes to pipeline
-                append_pipeline_log(
-                    status=pipeline_status,
-                    event_id=event_id,
-                    label=label,
-                    confidence=score,
-                    ts_ms=ts_ms
-                )
+                    label = str(category)
+                    if labels and int(category) < len(labels):
+                        label = labels[int(category)]
 
-                event_id += 1
+                    ts_ms = int(time.time() * 1000)
+                    pipeline_status = "ok" if score >= PIPELINE_OK_THRESHOLD else "no_detection"
 
-        print(f"Monitoring session complete: ran for {RECORDING_SECONDS} seconds")
-        print("Detection records written to", OUT)
+                    image_path = None
+                    
+                    # Only high-confidence detections can cause/use an image
+                    if score >= PIPELINE_OK_THRESHOLD:
+                        # If we have not yet captured an image for this second, do it now
+                        if current_second_image_path is None:
+                            image_path = f"artifacts/capture_sec_{current_second:02d}.jpg"
+                            picam2.capture_file(image_path)
+                            current_second_image_path = image_path
+                            last_capture_second = current_second
+                        else:
+                            # Reuse the same image for all detections in this second
+                            image_path = current_second_image_path
 
-    finally:
-        picam2.stop()
-        
-        # Trigger the next stage of the pipeline
-        subprocess.run(["python3", "src/person_candidate_extractor.py"], check=False)
+                    scaled = imx500.convert_inference_coords(box, metadata, picam2)
+
+                    record = {
+                        "device_id": "pi-camera",
+                        "ts_ms": ts_ms,
+                        "event_id": event_id,
+                        "event_type": "object_detected",
+                        "label": label,
+                        "class_id": int(category),
+                        "confidence": round(score, 4),
+                        "bbox": [
+                            int(scaled[0]),
+                            int(scaled[1]),
+                            int(scaled[2]),
+                            int(scaled[3])
+                        ],
+                        "image_file": image_path,
+                        "rule": "imx500_mobilenet_ssd_v1"
+                    }
+
+                    with OUT.open("a", encoding="utf-8") as f:
+                        f.write(json.dumps(record) + "\n")
+
+                    # Only high-confidence detections go to latest detections
+                    if score >= PIPELINE_OK_THRESHOLD:
+                        append_latest_detection(label, score, ts_ms)
+
+                    # Every detection above THRESHOLD still goes to pipeline
+                    append_pipeline_log(
+                        status=pipeline_status,
+                        event_id=event_id,
+                        label=label,
+                        confidence=score,
+                        ts_ms=ts_ms
+                    )
+
+                    event_id += 1
+
+            print(f"Monitoring session complete: ran for {RECORDING_SECONDS} seconds")
+            print("Detection records written to", OUT)
+
+        finally:
+            picam2.stop()
+            picam2.stop_encoder()
+            
+            # Trigger the next stage of the pipeline
+            subprocess.run(["python3", "src/person_candidate_extractor.py"], check=False)
 
 
 if __name__ == "__main__":
-    main()
+    arduino_trigger()

@@ -9,7 +9,7 @@ BAUD = 115200
 
 BROKER_HOST = "localhost"
 BROKER_PORT = 1883
-TOPIC_TEMPLATE = "mscs506n/s26/muller-arduino-01/events"
+TOPIC_TEMPLATE = "mscs506n/s26/dev-arduino/events"
 
 OUT_SERIAL = Path("artifacts/serial_events.jsonl")
 
