@@ -212,3 +212,4 @@ __marimo__/
 
 latest_detections.txt
 *.jsonl
+*.jpg
