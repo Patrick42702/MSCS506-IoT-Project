@@ -42,7 +42,7 @@ void setup() {
 
   calibrationStartTime = millis();
 
-  Serial.println("{\"event\":\"photoresistor_calibration_started\",\"duration_seconds\":60}");
+  Serial.println("{\"event\":\"photoresistor_calibration_started\",\"duration_seconds\":30}");
 }
 
 void loop() {
