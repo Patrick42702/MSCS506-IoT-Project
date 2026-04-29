@@ -1,0 +1,15 @@
+[Unit]
+Description=Serial MQTT bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mscs-pi5-5
+WorkingDirectory=/home/mscs-pi5-5/School/MSCS506-IoT-Project/src
+ExecStart=/usr/bin/python3 /home/mscs-pi5-5/School/MSCS506-IoT-Project/src/serial_mqtt_bridge.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
