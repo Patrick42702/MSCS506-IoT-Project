@@ -1,7 +1,12 @@
 from pathlib import Path
 import cv2
 
-KNOWN_DIR = Path("/home/mscs-pi5-3/MSCS506-IoT-Project/artifacts/known_faces")
+# Get project root (parent of src/)
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+ARTIFACTS_DIR = PROJECT_ROOT / "artifacts"
+
+KNOWN_DIR = ARTIFACTS_DIR / "known_faces"
 
 image_paths = sorted(
     list(KNOWN_DIR.glob("*.jpg")) +

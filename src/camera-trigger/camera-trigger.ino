@@ -5,7 +5,7 @@ const int photoPin = A0;
 int lastReedState = HIGH;
 
 // -------------------- Photoresistor calibration --------------------
-const unsigned long calibrationTimeMs = 60000; // 60 seconds
+const unsigned long calibrationTimeMs = 30000; // 30 seconds
 const unsigned long sampleIntervalMs = 50;    // sample every 50 ms
 
 bool calibrated = false;

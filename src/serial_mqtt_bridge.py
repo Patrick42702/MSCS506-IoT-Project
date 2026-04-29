@@ -49,9 +49,9 @@ def main():
             client.publish(topic, payload=line, qos=0, retain=False)
             published += 1
 
-            with OUT_SERIAL.open("a", encoding="utf-8") as f:
-                f.write(line + "\n")
-            kept += 1
+            # with OUT_SERIAL.open("a", encoding="utf-8") as f:
+            #     f.write(line + "\n")
+            # kept += 1
 
             if published % 10 == 0:
                 elapsed = time.time() - start

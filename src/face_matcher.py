@@ -5,9 +5,14 @@ from pathlib import Path
 import face_recognition
 import numpy as np
 
-KNOWN_EMBEDDINGS_FILE = Path("/home/mscs-pi5-3/MSCS506-IoT-Project/artifacts/known_face_embeddings.pkl")
-FACE_CROPS_DIR = Path("/home/mscs-pi5-3/MSCS506-IoT-Project/artifacts/face_crops")
-OUTPUT_FILE = Path("/home/mscs-pi5-3/MSCS506-IoT-Project/artifacts/face_match_results.json")
+# Get project root (parent of src/)
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+ARTIFACTS_DIR = PROJECT_ROOT / "artifacts"
+
+KNOWN_EMBEDDINGS_FILE = ARTIFACTS_DIR / "known_face_embeddings.pkl"
+FACE_CROPS_DIR = ARTIFACTS_DIR / "face_crops"
+OUTPUT_FILE = ARTIFACTS_DIR / "face_match_results.json"
 
 MATCH_THRESHOLD = 0.55
 

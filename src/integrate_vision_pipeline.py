@@ -65,14 +65,17 @@ def on_message(client, userdata, msg):
 
     if locked:
         raw_msg = msg.payload.decode()
+        print(f"message received: {raw_msg}")
         event_json = json.loads(raw_msg)
-        print(f"Trigger received: {msg.payload.decode()}. Starting background thread.")
 
         if event_json["event"] == "intruder_criteria_met":
+            print(f"Trigger received: Starting background thread.")
 
             # start main on its own thread so we can keep
             t = threading.Thread(target=run_camera_with_lock)
             t.start()
+        else:
+            processing_lock.release()
     else:
         print("Camera busy. Message ignored.")
 
