@@ -33,7 +33,7 @@ end
 # Unset irrelevant variables.
 deactivate nondestructive
 
-set -gx VIRTUAL_ENV /home/mscs-pi5-3/MSCS506-IoT-Project/face_env
+set -gx VIRTUAL_ENV /home/mscs-pi5-5/School/MSCS506-IoT-Project/face_env
 
 set -gx _OLD_VIRTUAL_PATH $PATH
 set -gx PATH "$VIRTUAL_ENV/"bin $PATH

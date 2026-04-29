@@ -38,7 +38,7 @@ deactivate () {
 # unset irrelevant variables
 deactivate nondestructive
 
-VIRTUAL_ENV=/home/mscs-pi5-3/MSCS506-IoT-Project/face_env
+VIRTUAL_ENV=/home/mscs-pi5-5/School/MSCS506-IoT-Project/face_env
 export VIRTUAL_ENV
 
 _OLD_VIRTUAL_PATH="$PATH"
