@@ -1,7 +1,7 @@
 import json
 import time
 from pathlib import Path
-
+import subprocess
 import cv2
 
 INPUT_JSON = Path("artifacts/face_candidates.json")
@@ -102,6 +102,27 @@ def main():
 
     print(f"Wrote {len(crops)} face crop(s) to {OUTPUT_JSON}")
     print(f"Saved cropped face images in {OUTPUT_DIR}")
+    
+    SRC_DIR = Path(__file__).resolve().parent
+    FACE_MATCHER_SCRIPT = SRC_DIR / "face_matcher.py"
+
+    if len(crops) > 0:
+        print("\nRunning face matcher...")
+
+        result = subprocess.run(
+            ["python3", str(FACE_MATCHER_SCRIPT)],
+            cwd=str(SRC_DIR),
+            capture_output=True,
+            text=True
+        )
+
+        print(result.stdout)
+
+        if result.stderr:
+            print("Face matcher error:")
+            print(result.stderr)
+    else:
+        print("\nNo face crops found, so face matcher was not run.")
 
 
 if __name__ == "__main__":

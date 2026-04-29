@@ -3,17 +3,30 @@ import time
 from datetime import datetime
 from pathlib import Path
 import threading
+import subprocess
+
 import paho.mqtt.client as mqtt
 
 from picamera2 import Picamera2
 from picamera2.devices import IMX500
 from picamera2.devices.imx500 import NetworkIntrinsics
-import subprocess
+
+from artifact_policy import clear_run_artifacts
+
 
 MODEL = "/usr/share/imx500-models/imx500_network_ssd_mobilenetv2_fpnlite_320x320_pp.rpk"
-OUT = Path("artifacts/vision_events.jsonl")
-PIPELINE_LOG = Path("artifacts/pipeline_log.jsonl")
-LATEST_DETECTIONS = Path("artifacts/latest_detections.txt")
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+SRC_DIR = Path(__file__).resolve().parent
+
+ARTIFACTS_DIR = BASE_DIR / "artifacts"
+INITIAL_CAPTURES_DIR = ARTIFACTS_DIR / "initial_captures"
+
+OUT = ARTIFACTS_DIR / "vision_events.jsonl"
+PIPELINE_LOG = ARTIFACTS_DIR / "pipeline_log.jsonl"
+LATEST_DETECTIONS = ARTIFACTS_DIR / "latest_detections.txt"
+
+PERSON_EXTRACTOR_SCRIPT = SRC_DIR / "person_candidate_extractor.py"
 
 BROKER_HOST = "localhost"
 BROKER_PORT = 1883
@@ -24,6 +37,7 @@ PIPELINE_OK_THRESHOLD = 0.70
 RECORDING_SECONDS = 20
 
 processing_lock = threading.Lock()
+
 
 def append_pipeline_log(status, event_id, label, confidence, ts_ms):
     log_record = {
@@ -37,25 +51,25 @@ def append_pipeline_log(status, event_id, label, confidence, ts_ms):
 
     with PIPELINE_LOG.open("a", encoding="utf-8") as f:
         f.write(json.dumps(log_record) + "\n")
-        
+
+
 def append_latest_detection(label, confidence, ts_ms):
     dt_string = datetime.fromtimestamp(ts_ms / 1000).strftime("%Y-%m-%d %H:%M:%S")
     line = f"{dt_string} - Detected {label} with confidence {confidence:.4f}\n"
 
     with LATEST_DETECTIONS.open("a", encoding="utf-8") as f:
         f.write(line)
-
+        
 def on_message(client, userdata, msg):
     locked = processing_lock.acquire(blocking=False)
 
     if locked:
         print(f"Trigger received: {msg.payload.decode()}. Starting background thread.")
-
-        # start main on its own thread so we can keep
         t = threading.Thread(target=run_camera_with_lock)
         t.start()
     else:
         print("Camera busy. Message ignored.")
+
 
 def run_camera_with_lock():
     try:
@@ -64,31 +78,32 @@ def run_camera_with_lock():
         processing_lock.release()
         print("Camera task complete. Lock released.")
 
+
 def arduino_trigger():
     client = mqtt.Client()
-
     client.on_message = on_message
 
     client.connect(BROKER_HOST, BROKER_PORT, keepalive=60)
     client.subscribe(TOPIC)
     client.loop_start()
 
-    # Keep the main script alive
     try:
         while True:
-            pass
+            time.sleep(0.1)
     except KeyboardInterrupt:
         client.loop_stop()
-
+        print("Stopped MQTT listener.")
 
 def main():
-    OUT.parent.mkdir(parents=True, exist_ok=True)
+    clear_run_artifacts()
 
-    # Reset these files each run
+    ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
+    INITIAL_CAPTURES_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Reset these files each run.
+    # pipeline_log.jsonl is intentionally never cleared here.
     OUT.write_text("", encoding="utf-8")
     LATEST_DETECTIONS.write_text("", encoding="utf-8")
-
-    # IMPORTANT: pipeline_log.jsonl is NEVER cleared
 
     imx500 = IMX500(MODEL)
     intrinsics = imx500.network_intrinsics
@@ -105,25 +120,29 @@ def main():
             controls={"FrameRate": intrinsics.inference_rate},
             buffer_count=12
         )
-        
+
         imx500.show_network_fw_progress_bar()
         picam2.start(config, show_preview=False)
         time.sleep(2)
 
         event_id = 1
-
-        # Track image capture so we save at most 1 picture per second
         last_capture_second = -1
         current_second_image_path = None
-
-        # Fixed 20-second monitoring window
+        
         start_monotonic = time.monotonic()
 
         try:
             while True:
                 elapsed = time.monotonic() - start_monotonic
+
                 if elapsed >= RECORDING_SECONDS:
                     break
+
+                current_second = int(elapsed)
+
+                # Reset shared capture path when we enter a new second.
+                if current_second != last_capture_second:
+                    current_second_image_path = None
 
                 metadata = picam2.capture_metadata()
                 outputs = imx500.get_outputs(metadata, add_batch=True)
@@ -139,25 +158,14 @@ def main():
 
                 if intrinsics.bbox_order == "xy":
                     boxes = boxes[:, [1, 0, 3, 2]]
-                    
-                # Integer second within the 20-second run: 0..19
-                elapsed = time.monotonic() - start_monotonic
-                if elapsed >= RECORDING_SECONDS:
-                    break
-
-                current_second = int(elapsed)
-
-                # Reset per-second shared image path when second changes
-                if current_second != last_capture_second:
-                    current_second_image_path = None
 
                 for box, score, category in zip(boxes, scores, classes):
                     score = float(score)
 
-                    # Ignore extremely weak detections entirely
+                    # Ignore extremely weak detections entirely.
                     if score < THRESHOLD:
                         continue
-
+                        
                     label = str(category)
                     if labels and int(category) < len(labels):
                         label = labels[int(category)]
@@ -166,17 +174,16 @@ def main():
                     pipeline_status = "ok" if score >= PIPELINE_OK_THRESHOLD else "no_detection"
 
                     image_path = None
-                    
-                    # Only high-confidence detections can cause/use an image
+
+                    # Only high-confidence detections create/use an image.
                     if score >= PIPELINE_OK_THRESHOLD:
-                        # If we have not yet captured an image for this second, do it now
                         if current_second_image_path is None:
-                            image_path = f"artifacts/capture_sec_{current_second:02d}.jpg"
-                            picam2.capture_file(image_path)
+                            image_path = INITIAL_CAPTURES_DIR / f"capture_{current_second:02d}.jpg"
+                            picam2.capture_file(str(image_path))
+
                             current_second_image_path = image_path
                             last_capture_second = current_second
                         else:
-                            # Reuse the same image for all detections in this second
                             image_path = current_second_image_path
 
                     scaled = imx500.convert_inference_coords(box, metadata, picam2)
@@ -195,18 +202,16 @@ def main():
                             int(scaled[2]),
                             int(scaled[3])
                         ],
-                        "image_file": image_path,
+                        "image_file": str(image_path) if image_path else None,
                         "rule": "imx500_mobilenet_ssd_v1"
                     }
 
                     with OUT.open("a", encoding="utf-8") as f:
                         f.write(json.dumps(record) + "\n")
 
-                    # Only high-confidence detections go to latest detections
                     if score >= PIPELINE_OK_THRESHOLD:
                         append_latest_detection(label, score, ts_ms)
 
-                    # Every detection above THRESHOLD still goes to pipeline
                     append_pipeline_log(
                         status=pipeline_status,
                         event_id=event_id,
@@ -222,10 +227,18 @@ def main():
 
         finally:
             picam2.stop()
-            picam2.stop_encoder()
-            
-            # Trigger the next stage of the pipeline
-            subprocess.run(["python3", "src/person_candidate_extractor.py"], check=False)
+
+            try:
+                picam2.stop_encoder()
+            except Exception:
+                pass
+
+            print("Running person candidate extractor...")
+            subprocess.run(
+                ["python3", str(PERSON_EXTRACTOR_SCRIPT)],
+                cwd=str(BASE_DIR),
+                check=False
+            )
 
 
 if __name__ == "__main__":
