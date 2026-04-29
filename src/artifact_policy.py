@@ -1,28 +1,28 @@
 from pathlib import Path
+import shutil
 
-ARTIFACTS_DIR = Path("artifacts")
+BASE_DIR = Path(__file__).resolve().parent.parent
+ARTIFACTS_DIR = BASE_DIR / "artifacts"
 
-# Files that SHOULD be cleared at the start of a fresh run
-CLEAR_EACH_RUN = [
+# Files cleared each run
+CLEAR_FILES = [
     "face_candidates.json",
     "face_crops.json",
-    "person_candidates.json"
     "face_match_results.json",
-    "latest_detection.txt",
+    "latest_detections.txt",
     "vision_events.jsonl",
 ]
 
-# Files that should NEVER be cleared automatically
-NEVER_CLEAR = [
+# Files that should persist
+PERSISTENT_FILES = [
     "pipeline_log.jsonl",
 ]
 
-# Folders that should be wiped each run
+# Folders cleared each run
 CLEAR_FOLDERS = [
     ARTIFACTS_DIR / "initial_captures",
     ARTIFACTS_DIR / "face_crops",
 ]
-
 
 def clear_run_artifacts():
 
