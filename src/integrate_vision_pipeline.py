@@ -248,6 +248,8 @@ def main():
                 cwd=str(BASE_DIR),
                 check=False
             )
+            
+            subprocess.run(["python3", "src/intruder_notifier.py"], check=False)
 
 
 if __name__ == "__main__":
